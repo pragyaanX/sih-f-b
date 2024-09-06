@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 
@@ -79,6 +79,11 @@ const App = () => {
   const [error, setError] = useState('');
   const [succ, setSucc] = useState('');
 
+  useEffect(() => {
+    console.log('use effect');
+    console.log(file, load);
+  }, [bName, load])
+
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
   };
@@ -93,11 +98,10 @@ const App = () => {
     formData.append('file', file);
     formData.append('selected_band', bName);
 
-    console.log('Selected band:', bName);
-    console.log('Uploaded file:', file);
+    console.log('debug', formData);
 
     try {
-      const response = await axios.post('http://localhost:2929/process_hdf5', formData, {
+      const response = await axios.post('http://localhost:8000/process_hdf5', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setSucc('File uploaded successfully');
@@ -107,7 +111,8 @@ const App = () => {
       setLoad(false);
     }
   };
-
+  console.log('Selected band:', bName);
+  console.log('Uploaded file:', file);
   const stars = Array.from({ length: 100 });
 
   const generateRandomDelay = () => Math.random() * 5;

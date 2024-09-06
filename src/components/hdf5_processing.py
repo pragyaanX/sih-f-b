@@ -5,16 +5,22 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
+# Directory for temporary files
+TEMP_FOLDER = 'temp'
+os.makedirs(TEMP_FOLDER, exist_ok=True)  # Ensure the folder exists
+
 def process_hdf5(file_path, selected_band=None):
+    """Processes an HDF5 file to extract a selected band and convert it to COG format."""
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"The file '{file_path}' not found")
+        raise FileNotFoundError(f"The file '{file_path}' was not found")
 
     with h5py.File(file_path, 'r') as hdf:
-        available_bands = [band for band in hdf.keys()]
+        available_bands = list(hdf.keys())
         print(f"Available bands: {', '.join(available_bands)}")
 
+        # Prompt user if no band was provided
         if not selected_band:
-            selected_band = input(f"Enter the band name to convert to COG from the above list: ")
+            selected_band = input("Enter the band name to convert to COG from the above list: ")
 
         if selected_band not in available_bands:
             raise ValueError(f"Band '{selected_band}' not found in the available bands")
@@ -23,62 +29,62 @@ def process_hdf5(file_path, selected_band=None):
         print(f"Debug: Dataset shape = {dataset.shape}")  # Debug print
 
         # Example geotransform values, replace with actual values if available
-        geotransform = (0, 1, 0, 0, 0, -1)
+        geotransform = (0, 1, 0, 0, 0, -1)  # Replace with actual geotransform
         print(f"Debug: Geotransform = {geotransform}")  # Debug print
-        
 
-        top_left_x = geotransform[0]
-        top_left_y = geotransform[3]
-        pixel_width = geotransform[1]
-        pixel_height = geotransform[5]
-        pixel_size = np.sqrt(pixel_width**2 + pixel_height**2)
-        print(f"Debug: Calculated pixel_size = {pixel_size}") 
-        output_tiff = os.path.normpath(f"./temp/{selected_band}.tif")
-        cog_output_tiff = os.path.normpath(f"./temp/{selected_band}_COG.tif")
+        # Calculate pixel size
+        pixel_size = np.sqrt(geotransform[1] ** 2 + geotransform[5] ** 2)
+        print(f"Debug: Calculated pixel_size = {pixel_size}")
+
+        # Prepare file paths for outputs
+        output_tiff = os.path.join(TEMP_FOLDER, f"{selected_band}.tif")
 
         if len(dataset.shape) == 2:
-            with rasterio.open(output_tiff, 'w', driver='GTiff', height=dataset.shape[0], width=dataset.shape[1], 
-                               count=1, dtype=dataset.dtype, crs='+proj=latlong', 
-                               transform=from_origin(top_left_x, top_left_y, pixel_size, pixel_size)) as dst:
-                dst.write(dataset, 1)
+            # For 2D data
+            convert_to_tiff(dataset, output_tiff, geotransform, pixel_size)
         elif len(dataset.shape) == 3:
-            print("Debug: Processing 3D data")  # Debug print
-            for i in range(dataset.shape[0]):
-                band_data = dataset[i, :, :]
-                band_output_tiff = os.path.normpath(f"./temp/{selected_band}_band_{i}.tif")
-                with rasterio.open(band_output_tiff, 'w', driver='GTiff', height=band_data.shape[0], width=band_data.shape[1], 
-                                   count=1, dtype=band_data.dtype, crs='+proj=latlong', 
-                                   transform=from_origin(top_left_x, top_left_y, pixel_size, pixel_size)) as dst:
-                    dst.write(band_data, 1)
-                cog_output_tiff = os.path.normpath(f"./temp/{selected_band}band{i}_COG.tif")
-                cog_band_output_tiff = os.path.normpath(f"./temp/{selected_band}_band_{i}_COG.tif")
-                result = subprocess.run([
-                    'gdal_translate',
-                    '-of', 'COG',
-                    band_output_tiff,
-                    cog_band_output_tiff
-                ], capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise RuntimeError(f"Error converting to COG: {result.stderr}")
-                print(f"COG for {selected_band} band {i} created: {cog_band_output_tiff}")
+            # For 3D data
+            convert_3d_to_tiff(dataset, selected_band, geotransform, pixel_size)
         else:
             raise ValueError(f"Unsupported data shape for {selected_band}: {dataset.shape}")
 
-        # Convert to COG (for 2D data or last band of 3D data)
-        cog_output_tiff = os.path.normpath(f"./temp/{selected_band}_COG.tif")
-        result = subprocess.run([
-            'gdal_translate',
-            '-of', 'COG',
-            output_tiff,
-            cog_output_tiff
-        ], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Error converting to COG: {result.stderr}")
-        print(f"COG created: {cog_output_tiff}")
-
+        # Convert to COG
+        cog_output_tiff = convert_to_cog(output_tiff, selected_band)
         return cog_output_tiff
 
-if __name__ == "_main_":
+def convert_to_tiff(data, output_tiff, geotransform, pixel_size):
+    """Converts a 2D array to a GeoTIFF file."""
+    with rasterio.open(output_tiff, 'w', driver='GTiff', height=data.shape[0], width=data.shape[1],
+                       count=1, dtype=data.dtype, crs='+proj=latlong',
+                       transform=from_origin(geotransform[0], geotransform[3], pixel_size, pixel_size)) as dst:
+        dst.write(data, 1)
+    print(f"GeoTIFF created: {output_tiff}")
+
+def convert_3d_to_tiff(data, selected_band, geotransform, pixel_size):
+    """Converts each band of a 3D array to a separate GeoTIFF file and then to COG."""
+    for i in range(data.shape[0]):
+        band_data = data[i, :, :]
+        band_output_tiff = os.path.join(TEMP_FOLDER, f"{selected_band}.tif")
+        convert_to_tiff(band_data, band_output_tiff, geotransform, pixel_size)
+        cog_band_output_tiff = os.path.join(TEMP_FOLDER, f"{selected_band}.tif")
+        convert_to_cog(band_output_tiff, f"{selected_band}_band_{i}")
+
+def convert_to_cog(input_tiff, output_prefix):
+    """Converts a GeoTIFF file to a Cloud Optimized GeoTIFF (COG)."""
+    cog_output_tiff = os.path.join(TEMP_FOLDER, f"{output_prefix}_COG.tif")
+    result = subprocess.run([
+        'gdal_translate',
+        '-of', 'COG',
+        input_tiff,
+        cog_output_tiff
+    ], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error: {result.stderr}")  # Debug print
+        raise RuntimeError(f"Error converting to COG: {result.stderr}")
+    print(f"COG created: {cog_output_tiff}")
+    return cog_output_tiff
+
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Process an HDF5 file and convert selected band to COG")
@@ -90,5 +96,4 @@ if __name__ == "_main_":
     selected_band = args.band_name
 
     cog_output_tiff = process_hdf5(file_path, selected_band)
-    print(f"COG output file: {cog_output_tiff}")
     print(f"COG output file: {cog_output_tiff}")

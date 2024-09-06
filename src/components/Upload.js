@@ -97,7 +97,7 @@ const App = () => {
     console.log('Uploaded file:', file);
 
     try {
-      const response = await axios.post('http://localhost:8000/process_hdf5', formData, {
+      const response = await axios.post('http://localhost:2929/process_hdf5', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setSucc('File uploaded successfully');
